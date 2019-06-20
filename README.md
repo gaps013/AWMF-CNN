@@ -1,4 +1,5 @@
-# AWMF-CNN
+# Adaptive Weighting Multi-Field-of-View CNN for Semantic Segmentation in Pathology
+By Hiroki Tokunaga, Yuki Teramoto, Akihiko Yoshizawa, Ryoma Bise  
 https://arxiv.org/abs/1904.06040
 
 ## Abstract  

@@ -31,7 +31,7 @@ def set_session_gpu(G, allow_growth=False):
         first_flag = True
         # Get the first available GPU
         while True:
-            DEVICE_ID_LIST = GPUtil.getAvailable(order='last', limit=G, maxLoad=0.5, maxMemory=0.5, includeNan=False, excludeUUID=["GPU-736bc1f7-a5a4-9a23-76a8-7f4498cbaea2"])
+            DEVICE_ID_LIST = GPUtil.getAvailable(order='last', limit=G, maxLoad=0.5, maxMemory=0.5, includeNan=False)
             if DEVICE_ID_LIST != []:
                 break
             if first_flag:
@@ -47,7 +47,7 @@ def set_session_gpu(G, allow_growth=False):
 
     else:
         config = tf.ConfigProto(
-            device_count={"GPU": 0},  # GPUの数0に
+            device_count={"GPU": 0},
             log_device_placement=True
         )
 
@@ -302,7 +302,6 @@ class Segnet(FCN):
 
         conv_26 = Convolution2D(n_labels, (1, 1), padding="valid")(conv_25)
         conv_26 = BatchNormalization()(conv_26)
-        # conv_26 = Reshape((input_shape[0] * input_shape[1], n_labels), input_shape=(input_shape[0], input_shape[1], n_labels))(conv_26)
 
         # cropping & upsampling
         if SCALE == 0:
@@ -568,7 +567,7 @@ class UnetDilatedrate2(FCN):
         self.model = Model(inputs=inputs, outputs=conv9)
 
 
-class MSN(FCN):
+class FixedWeightingMultiFieldOfViewCNN(FCN):
     def __init__(self, input_channel_count, output_channel_count, LENGTH, LEVEL, weights_path, include_softmax=True):
         self.model_weight = weights_path
         self.nb_classes = output_channel_count
@@ -620,9 +619,7 @@ class MSN(FCN):
         cp_Expert1 = AnotherModelCheckpointCallback(self.model_weight.replace(str(self.LEVEL), "[" + str(self.LEVEL[1]) + "]").replace(self.__class__.__name__, self.__class__.__name__ + "_Expert" + str(self.LEVEL)), self.f1_x, monitor=monitor, verbose=1, save_best_only=True, save_weights_only=True, mode=mode)
         cp_Expert2 = AnotherModelCheckpointCallback(self.model_weight.replace(str(self.LEVEL), "[" + str(self.LEVEL[2]) + "]").replace(self.__class__.__name__, self.__class__.__name__ + "_Expert" + str(self.LEVEL)), self.f2_x, monitor=monitor, verbose=1, save_best_only=True, save_weights_only=True, mode=mode)
 
-        # reduce_lr = ReduceLROnPlateau(monitor=monitor, mode=mode, factor=0.1, patience=(patience + 1) / 2, min_lr=1e-5, verbose=1)
-
-        return [early_stopping, checkpoint, cp_Expert0, cp_Expert1, cp_Expert2]  # , reduce_lr]
+        return [early_stopping, checkpoint, cp_Expert0, cp_Expert1, cp_Expert2]
 
     def get_batch_size(self, size):
         return int(524288 / (size[0] * size[1]))
@@ -672,7 +669,7 @@ class MSN(FCN):
             yield [X1_1i, X1_2i, X1_3i]
 
 
-class SoftSwitchMultiLoss(FCN):
+class AdaptiveWeightingMultiFieldOfViewCNN(FCN):
     def __init__(self, input_channel_count, output_channel_count, LENGTH, LEVEL, weights_path, include_softmax=True):
         self.model_weight = weights_path
         self.nb_classes = output_channel_count
@@ -682,9 +679,7 @@ class SoftSwitchMultiLoss(FCN):
         self.CONV_FILTER_SIZE = 3
         self.first_layer_filter_count = 32
 
-        ##----------------------##
-        ##   MULTI INPUT FCNS   ##
-        ##----------------------##
+        #  Expert CNNs
         network0 = Unet(input_channel_count, output_channel_count, LENGTH, SCALE=0, weights_path=None, include_softmax=include_softmax)
         network1 = Unet(input_channel_count, output_channel_count, LENGTH, SCALE=LEVEL[1] - LEVEL[0], weights_path=None, include_softmax=include_softmax)
         network2 = Unet(input_channel_count, output_channel_count, LENGTH, SCALE=LEVEL[2] - LEVEL[0], weights_path=None, include_softmax=include_softmax)
@@ -702,16 +697,12 @@ class SoftSwitchMultiLoss(FCN):
         x = concatenate([self.f0_x.output, self.f1_x.output, self.f2_x.output], axis=self.CONCATENATE_AXIS)
         multi_input_fcns = Model(inputs=[self.f0_x.input, self.f1_x.input, self.f2_x.input], outputs=[x])
 
-        ##---------------------##
-        ##   SOFT SWITCH CNN   ##
-        ##---------------------##
+        #  Weighting CNN
         ssc = Xception(include_top=False, weights="imagenet", input_tensor=self.f1_x.input, input_shape=(LENGTH, LENGTH, input_channel_count), pooling="avg")
         top_model = Dense(len(LEVEL), activation='sigmoid')(ssc.output)
         self.soft_switch_cnn = Model(inputs=ssc.input, outputs=top_model)
 
-        ##----------------------------------------##
-        ##   SOFT SWITCH CNN + MULTI INPUT FCNS   ##
-        ##----------------------------------------##
+        # Aggregating CNN
         def resize_scalar_to_tensor(nb_classes):
             def custom_layer(x):
                 x = K.expand_dims(x, axis=1)
@@ -729,15 +720,9 @@ class SoftSwitchMultiLoss(FCN):
                     x3_con = concatenate([x3_con, x3], axis=-1)
                 x = concatenate([x1_con, x2_con, x3_con], axis=-1)
                 return x
-
             return custom_layer
-
         resize_layer = Lambda(resize_scalar_to_tensor(output_channel_count))
         multiplied_model = Model(inputs=[self.f0_x.input, self.f1_x.input, self.f2_x.input], outputs=multiply([multi_input_fcns.output, resize_layer(self.soft_switch_cnn.output)]))
-
-        ##-----------------------------------------------------##
-        ##   SOFT SWITCH CNN + MULTI INPUT FCNS + OUTPUT FCN   ##
-        ##-----------------------------------------------------##
         output_fcn = Conv2D(self.first_layer_filter_count * 2, self.CONV_FILTER_SIZE, padding='same', kernel_initializer='he_uniform')(multiplied_model.output)
         output_fcn = BatchNormalization()(output_fcn)
         output_fcn = keras.layers.advanced_activations.ELU()(output_fcn)
@@ -752,6 +737,7 @@ class SoftSwitchMultiLoss(FCN):
         output_fcn = keras.layers.advanced_activations.ELU()(output_fcn)
         output_fcn = Conv2D(output_channel_count, 1, padding='same', kernel_initializer='he_uniform')(output_fcn)
         output_fcn = Activation(activation='softmax', name="last")(output_fcn)
+        
         self.model = Model(inputs=multiplied_model.input, outputs=[output_fcn, self.f0_x.output, self.f1_x.output, self.f2_x.output])
 
     def plot_model(self, output_path="/dropbox/", network_mode="model"):

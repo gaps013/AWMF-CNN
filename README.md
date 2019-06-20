@@ -1,5 +1,6 @@
 # Adaptive Weighting Multi-Field-of-View CNN for Semantic Segmentation in Pathology
 By Hiroki Tokunaga, Yuki Teramoto, Akihiko Yoshizawa, Ryoma Bise  
+http://openaccess.thecvf.com/content_CVPR_2019/papers/Tokunaga_Adaptive_Weighting_Multi-Field-Of-View_CNN_for_Semantic_Segmentation_in_Pathology_CVPR_2019_paper.pdf  
 https://arxiv.org/abs/1904.06040
 
 ## Abstract  
@@ -7,3 +8,6 @@ Automated digital histopathology image segmentation is an important task to help
 
 ## Results
 ![Results](https://github.com/t-hrk155/AWMF-CNN/blob/master/Results.PNG)
+
+## Requirements: software
+Requirements for Keras==2.2.4 and Tensorflow-gpu==1.8.0
